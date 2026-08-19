@@ -10,7 +10,7 @@ echo.
 echo === Building Fast & Furious: 3D Street Racing ===
 echo.
 
-g++ -o StreetRacing.exe main.cpp -lfreeglut -lopengl32 -lglu32 -lm
+g++ -o StreetRacing.exe main.cpp -lfreeglut -lopengl32 -lglu32 -lwinmm -lm
 
 if %ERRORLEVEL% EQU 0 (
     echo.
