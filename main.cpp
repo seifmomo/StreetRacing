@@ -31,6 +31,14 @@
 #include <ctime>
 #include <vector>
 
+#ifdef _WIN32
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
+  #include <windows.h>
+  #include <mmsystem.h>
+#endif
+
 // ─────────────────────────────────────────────
 //  Constants
 // ─────────────────────────────────────────────
@@ -76,13 +84,13 @@ float gameTime = 0;
 //  Player Car
 // ─────────────────────────────────────────────
 float carX = 0, carY = 0, carZ = 0;
-float     carHeading = PI;            // radians, PI = facing -Z (into the city)
+float     carHeading = 0.0f;          // radians, 0 = facing +Z (start from far end)
 float carSpeed = 0;          // m/s
 float carSteerAngle = 0;     // current wheel turn
 float wheelRotation = 0;     // visual wheel spin
-float maxSpeed = 30.0f;
-float acceleration = 15.0f;
-float brakeForce = 20.0f;
+float maxSpeed = 60.0f;
+float acceleration = 35.0f;
+float brakeForce = 40.0f;
 float friction = 3.0f;
 float steerAmount = 0;
 bool  headlightsOn = true;
@@ -104,8 +112,8 @@ const int NUM_CAR_COLORS = 8;
 // ─────────────────────────────────────────────
 //  Road / City Layout
 // ─────────────────────────────────────────────
-const float ROAD_WIDTH  = 14.0f;
-const float ROAD_LENGTH = 300.0f;
+const float ROAD_WIDTH  = 22.0f;
+const float ROAD_LENGTH = 500.0f;
 const float SIDEWALK_H  = 0.15f;
 const float LANE_WIDTH  = 3.5f;
 
@@ -115,6 +123,30 @@ const float LANE_WIDTH  = 3.5f;
 bool keyW = false, keyS = false, keyA = false, keyD = false;
 bool keyLeft = false, keyRight = false, keyUp = false, keyDown = false;
 bool keyC = false, keyL = false, keyR = false;
+
+// ─────────────────────────────────────────────
+//  Collision Effect
+// ─────────────────────────────────────────────
+float collisionFlash = 0.0f;
+float screenShakeAmount = 0.0f;
+float collisionCooldown = 0.0f;
+
+// ─────────────────────────────────────────────
+//  Music
+// ─────────────────────────────────────────────
+bool musicPlaying = false;
+int currentTrack = 0;
+const char* musicFiles[] = {
+    "music\\track1.mp3",
+    "music\\track2.mp3",
+    "music\\track3.mp3",
+};
+const char* trackNames[] = {
+    "Track 1",
+    "Track 2",
+    "Track 3",
+};
+const int NUM_TRACKS = 3;
 
 // ─────────────────────────────────────────────
 //  Traffic Cars (AI, moving objects)
@@ -220,25 +252,22 @@ void drawSphere(float radius, int slices = 12, int stacks = 8) {
 void drawWheel(float x, float y, float z, float steer) {
     glPushMatrix();
     glTranslatef(x, y, z);
-    // Steering rotation around Y axis
     glRotatef(steer * 45.0f, 0.0f, 1.0f, 0.0f);
-    // Wheel spin around X axis (axle)
     glRotatef(wheelRotation, 1.0f, 0.0f, 0.0f);
-    // Rotate to orient the cylinder as a wheel (axle along X)
     glRotatef(90.0f, 0.0f, 1.0f, 0.0f);
 
-    // Tire (black rubber)
+    glDisable(GL_CULL_FACE);
+
     setMaterial(0.1f, 0.1f, 0.1f, 0.05f, 0.05f, 0.05f, 5.0f);
     drawCylinder(0.22f, 0.14f, 14);
 
-    // Rim (silver alloy)
     setMaterial(0.8f, 0.8f, 0.85f, 0.9f, 0.9f, 0.9f, 80.0f);
     drawCylinder(0.10f, 0.15f, 6);
 
-    // Hub
     setMaterial(0.6f, 0.6f, 0.65f, 0.7f, 0.7f, 0.7f, 50.0f);
     drawCylinder(0.05f, 0.16f, 5);
 
+    glEnable(GL_CULL_FACE);
     glPopMatrix();
 }
 
@@ -651,12 +680,12 @@ void initTraffic() {
         {0.15f, 0.15f, 0.15f}, {0.9f, 0.9f, 0.9f},
     };
 
-    // Spawn traffic cars at various positions along the road
-    for (int i = 0; i < 15; i++) {
+    // Spawn traffic cars at various positions along the road (oncoming)
+    for (int i = 0; i < 30; i++) {
         TrafficCar tc;
         tc.lane = ((i % 3) - 1) * LANE_WIDTH;
         tc.x = tc.lane;
-        tc.z = -20.0f - i * 20.0f;
+        tc.z = -10.0f - i * 18.0f;
         tc.speed = 5.0f + (rand() % 100) / 20.0f;
         int ci = rand() % 8;
         tc.colorR = tColors[ci][0];
@@ -739,66 +768,66 @@ void setupLighting() {
     glEnable(GL_LIGHTING);
 
     // ── Ambient (global night fill) ──
-    GLfloat globalAmb[] = { 0.15f, 0.15f, 0.2f, 1.0f };
+    GLfloat globalAmb[] = { 0.25f, 0.25f, 0.3f, 1.0f };
     glLightModelfv(GL_LIGHT_MODEL_AMBIENT, globalAmb);
 
     // ── GL_LIGHT0: Directional moonlight ──
     glEnable(GL_LIGHT0);
     GLfloat moonPos[]  = { -10.0f, 20.0f, -5.0f, 0.0f }; // w=0 means directional
-    GLfloat moonAmb[]  = { 0.12f, 0.12f, 0.18f, 1.0f };
-    GLfloat moonDif[]  = { 0.55f, 0.55f, 0.7f, 1.0f };
-    GLfloat moonSpc[]  = { 0.3f, 0.3f, 0.4f, 1.0f };
+    GLfloat moonAmb[]  = { 0.2f, 0.2f, 0.25f, 1.0f };
+    GLfloat moonDif[]  = { 0.75f, 0.75f, 0.85f, 1.0f };
+    GLfloat moonSpc[]  = { 0.4f, 0.4f, 0.5f, 1.0f };
     glLightfv(GL_LIGHT0, GL_POSITION, moonPos);
     glLightfv(GL_LIGHT0, GL_AMBIENT,  moonAmb);
     glLightfv(GL_LIGHT0, GL_DIFFUSE,  moonDif);
     glLightfv(GL_LIGHT0, GL_SPECULAR, moonSpc);
 
-    // ── GL_LIGHT1-GL_LIGHT5: Street lamp point lights (first 5 lamps) ──
+    // ── GL_LIGHT1-GL_LIGHT5: Street lamp point lights ──
     for (int i = 0; i < 5 && i < (int)lampPositions.size(); i++) {
         int lightID = GL_LIGHT1 + i;
         glEnable(lightID);
         GLfloat pos[]  = { lampPositions[i].x, 4.2f, lampPositions[i].z, 1.0f };
-        GLfloat amb[]  = { 0.1f, 0.08f, 0.04f, 1.0f };
-        GLfloat dif[]  = { 1.0f, 0.9f, 0.6f, 1.0f };
-        GLfloat spc[]  = { 0.6f, 0.5f, 0.3f, 1.0f };
+        GLfloat amb[]  = { 0.15f, 0.12f, 0.07f, 1.0f };
+        GLfloat dif[]  = { 1.0f, 0.95f, 0.7f, 1.0f };
+        GLfloat spc[]  = { 0.7f, 0.6f, 0.4f, 1.0f };
         glLightfv(lightID, GL_POSITION, pos);
         glLightfv(lightID, GL_AMBIENT,  amb);
         glLightfv(lightID, GL_DIFFUSE,  dif);
         glLightfv(lightID, GL_SPECULAR, spc);
-        glLightf(lightID,  GL_CONSTANT_ATTENUATION,  1.0f);
-        glLightf(lightID,  GL_LINEAR_ATTENUATION,    0.08f);
-        glLightf(lightID,  GL_QUADRATIC_ATTENUATION, 0.02f);
+        glLightf(lightID,  GL_CONSTANT_ATTENUATION,  0.8f);
+        glLightf(lightID,  GL_LINEAR_ATTENUATION,    0.04f);
+        glLightf(lightID,  GL_QUADRATIC_ATTENUATION, 0.008f);
     }
 
     // ── GL_LIGHT6, GL_LIGHT7: Car headlights ──
     glEnable(GL_LIGHT6);
     glEnable(GL_LIGHT7);
-    GLfloat hlAmb[]  = { 0.05f, 0.05f, 0.03f, 1.0f };
-    GLfloat hlDif[]  = { 1.0f, 0.95f, 0.7f, 1.0f };
-    GLfloat hlSpc[]  = { 0.8f, 0.8f, 0.6f, 1.0f };
+    GLfloat hlAmb[]  = { 0.1f, 0.1f, 0.06f, 1.0f };
+    GLfloat hlDif[]  = { 1.0f, 0.98f, 0.8f, 1.0f };
+    GLfloat hlSpc[]  = { 1.0f, 1.0f, 0.8f, 1.0f };
     glLightfv(GL_LIGHT6, GL_AMBIENT,  hlAmb);
     glLightfv(GL_LIGHT6, GL_DIFFUSE,  hlDif);
     glLightfv(GL_LIGHT6, GL_SPECULAR, hlSpc);
-    glLightf(GL_LIGHT6,  GL_CONSTANT_ATTENUATION,  1.0f);
-    glLightf(GL_LIGHT6,  GL_LINEAR_ATTENUATION,    0.12f);
-    glLightf(GL_LIGHT6,  GL_QUADRATIC_ATTENUATION, 0.03f);
+    glLightf(GL_LIGHT6,  GL_CONSTANT_ATTENUATION,  0.7f);
+    glLightf(GL_LIGHT6,  GL_LINEAR_ATTENUATION,    0.08f);
+    glLightf(GL_LIGHT6,  GL_QUADRATIC_ATTENUATION, 0.015f);
 
     glLightfv(GL_LIGHT7, GL_AMBIENT,  hlAmb);
     glLightfv(GL_LIGHT7, GL_DIFFUSE,  hlDif);
     glLightfv(GL_LIGHT7, GL_SPECULAR, hlSpc);
-    glLightf(GL_LIGHT7,  GL_CONSTANT_ATTENUATION,  1.0f);
-    glLightf(GL_LIGHT7,  GL_LINEAR_ATTENUATION,    0.12f);
-    glLightf(GL_LIGHT7,  GL_QUADRATIC_ATTENUATION, 0.03f);
+    glLightf(GL_LIGHT7,  GL_CONSTANT_ATTENUATION,  0.7f);
+    glLightf(GL_LIGHT7,  GL_LINEAR_ATTENUATION,    0.08f);
+    glLightf(GL_LIGHT7,  GL_QUADRATIC_ATTENUATION, 0.015f);
 
     glEnable(GL_NORMALIZE);
 
     // ── Fog for night atmosphere ──
     glEnable(GL_FOG);
-    GLfloat fogColor[] = { 0.04f, 0.04f, 0.08f, 1.0f };
+    GLfloat fogColor[] = { 0.06f, 0.06f, 0.1f, 1.0f };
     glFogfv(GL_FOG_COLOR, fogColor);
     glFogi(GL_FOG_MODE, GL_LINEAR);
-    glFogf(GL_FOG_START, 60.0f);
-    glFogf(GL_FOG_END, 150.0f);
+    glFogf(GL_FOG_START, 100.0f);
+    glFogf(GL_FOG_END, 300.0f);
 }
 
 // ═════════════════════════════════════════════
@@ -854,8 +883,8 @@ void updateHeadlights() {
 void resetGame() {
     carX = 0.0f;
     carY = 0.18f;
-    carZ = -5.0f;
-    carHeading = PI;
+    carZ = -ROAD_LENGTH / 2.0f;
+    carHeading = 0.0f;
     carSpeed = 0.0f;
     carSteerAngle = 0.0f;
     wheelRotation = 0.0f;
@@ -863,16 +892,33 @@ void resetGame() {
     headlightsOn = true;
     gameTime = 0;
 
-    // Reset camera
-    camFreeX = 0; camFreeY = 5; camFreeZ = 15;
-    camFreeYaw = 0; camFreePitch = -15;
+    // Snap camera directly behind car (no transition)
     camMode = CAM_THIRD;
+    camTransitioning = false;
+    float cosH = cosf(carHeading);
+    float sinH = sinf(carHeading);
+    float dist = 7.0f;
+    camX = carX + sinH * dist;
+    camY = 3.5f;
+    camZ = carZ - cosH * dist;
+    camLookX = carX + sinH * 3.0f;
+    camLookY = 0.5f;
+    camLookZ = carZ + cosH * 3.0f;
+
+    camFreeX = 0; camFreeY = 5; camFreeZ = carZ + 12;
+    camFreeYaw = 0; camFreePitch = -15;
 
     initTraffic();
     gameState = DRIVING;
 }
 
+void updateMusic(float dt);
+void playMusic();
+void stopMusic();
+void nextTrack();
+
 void updateGame(float dt) {
+    updateMusic(dt);
     if (gameState != DRIVING) return;
 
     gameTime += dt;
@@ -899,14 +945,14 @@ void updateGame(float dt) {
     if (keyA) steerTarget = -1.0f;
     if (keyD) steerTarget =  1.0f;
 
-    carSteerAngle = lerp(carSteerAngle, steerTarget, dt * 5.0f);
+    carSteerAngle = lerp(carSteerAngle, steerTarget, dt * 10.0f);
 
     // Only steer when moving
-    if (fabsf(carSpeed) > 0.5f) {
-        float steerRate = carSteerAngle * 1.8f * dt;
+    if (fabsf(carSpeed) > 0.3f) {
+        float steerRate = carSteerAngle * 3.0f * dt;
         // Reduce turn at high speed
-        steerRate *= (1.0f - fabsf(carSpeed) / maxSpeed * 0.4f);
-        carHeading += steerRate * (carSpeed > 0 ? 1.0f : -1.0f);
+        steerRate *= (1.0f - fabsf(carSpeed) / maxSpeed * 0.3f);
+        carHeading -= steerRate * (carSpeed > 0 ? 1.0f : -1.0f);
     }
 
     // ── Move car ──
@@ -915,25 +961,85 @@ void updateGame(float dt) {
     carX += sinH * carSpeed * dt;
     carZ += cosH * carSpeed * dt;
 
-    // ── Clamp to road ──
+    // ── Clamp X to road ──
     float halfRoad = ROAD_WIDTH / 2.0f - 1.0f;
     if (carX < -halfRoad) { carX = -halfRoad; carSpeed *= 0.8f; }
     if (carX >  halfRoad) { carX =  halfRoad; carSpeed *= 0.8f; }
-    if (carZ >  2.0f)     { carZ =  2.0f; }
-    if (carZ < -ROAD_LENGTH + 5.0f) { carZ = -ROAD_LENGTH + 5.0f; }
+
+    // ── Wrap Z (infinite loop) ──
+    if (carZ > 10.0f)              { carZ -= ROAD_LENGTH; }
+    if (carZ < -ROAD_LENGTH - 10.0f) { carZ += ROAD_LENGTH; }
 
     // ── Wheel rotation ──
     wheelRotation += carSpeed * 60.0f * dt;
 
     // ── Update traffic ──
     for (TrafficCar& tc : trafficCars) {
-        tc.z += tc.speed * dt;
-        // Respawn if passed the player (going +Z)
-        if (tc.z > 15.0f) {
-            tc.z = -ROAD_LENGTH + (rand() % 50);
-            tc.lane = ((rand() % 3) - 1) * LANE_WIDTH;
-            tc.x = tc.lane;
-            tc.speed = 5.0f + (rand() % 100) / 20.0f;
+        tc.z -= tc.speed * dt;
+        // Wrap around (infinite loop)
+        if (tc.z < -ROAD_LENGTH - 10.0f) {
+            tc.z += ROAD_LENGTH + 20.0f;
+        }
+        if (tc.z > 10.0f) {
+            tc.z -= ROAD_LENGTH + 20.0f;
+        }
+    }
+
+    // ── Collision detection ──
+    if (collisionCooldown > 0) collisionCooldown -= dt;
+    if (collisionFlash > 0) collisionFlash -= dt * 3.0f;
+    if (screenShakeAmount > 0) screenShakeAmount -= dt * 8.0f;
+
+    float playerHW = 0.65f;   // player half width
+    float playerHL = 1.35f;   // player half length
+    float trafficHW = 0.55f;
+    float trafficHL = 1.0f;
+
+    for (TrafficCar& tc : trafficCars) {
+        if (!tc.active) continue;
+        float dx = fabsf(carX - tc.x);
+        float rawDz = carZ - tc.z;
+        // Wrap Z distance for infinite loop
+        if (rawDz >  ROAD_LENGTH / 2.0f) rawDz -= ROAD_LENGTH;
+        if (rawDz < -ROAD_LENGTH / 2.0f) rawDz += ROAD_LENGTH;
+        float dz = fabsf(rawDz);
+        float overlapX = playerHW + trafficHW - dx;
+        float overlapZ = playerHL + trafficHL - dz;
+
+        if (overlapX > 0 && overlapZ > 0 && collisionCooldown <= 0) {
+            // Hit!
+            collisionFlash = 1.0f;
+            screenShakeAmount = 0.5f;
+            collisionCooldown = 0.5f;
+
+            float impactForce = fabsf(carSpeed) + fabsf(tc.speed);
+            carSpeed *= -0.3f;
+
+            float pushDirZ = (carZ > tc.z) ? 1.0f : -1.0f;
+            carZ += pushDirZ * overlapZ * 0.8f;
+
+            float pushDirX = (carX > tc.x) ? 1.0f : -1.0f;
+            if (overlapX > 0.1f) carX += pushDirX * overlapX * 0.5f;
+        }
+    }
+
+    // ── Traffic-to-traffic collision ──
+    for (int i = 0; i < (int)trafficCars.size(); i++) {
+        for (int j = i + 1; j < (int)trafficCars.size(); j++) {
+            TrafficCar& a = trafficCars[i];
+            TrafficCar& b = trafficCars[j];
+            float dx = fabsf(a.x - b.x);
+            float rawDz = a.z - b.z;
+            if (rawDz >  ROAD_LENGTH / 2.0f) rawDz -= ROAD_LENGTH;
+            if (rawDz < -ROAD_LENGTH / 2.0f) rawDz += ROAD_LENGTH;
+            float dz = fabsf(rawDz);
+            if (dx < trafficHW * 2.0f && dz < trafficHL * 2.0f) {
+                float pushX = (a.x > b.x) ? 1.0f : -1.0f;
+                a.x += pushX * 0.1f;
+                b.x -= pushX * 0.1f;
+                if (a.z > b.z) { a.z += 0.05f; b.z -= 0.05f; }
+                else           { a.z -= 0.05f; b.z += 0.05f; }
+            }
         }
     }
 }
@@ -1066,7 +1172,7 @@ void updateCamera(float dt) {
 void drawText(float x, float y, const char* text, void* font = GLUT_BITMAP_HELVETICA_18) {
     glRasterPos2f(x, y);
     for (const char* c = text; *c != '\0'; c++) {
-        glutBitmapCharacter(font, *c);
+        glutBitmapCharacter(font, (unsigned char)*c);
     }
 }
 
@@ -1075,7 +1181,7 @@ void drawTextCentered(float x, float y, const char* text, void* font = GLUT_BITM
     for (const char* c = text; *c != '\0'; c++) len++;
     glRasterPos2f(x - len * 4.5f, y);
     for (const char* c = text; *c != '\0'; c++) {
-        glutBitmapCharacter(font, *c);
+        glutBitmapCharacter(font, (unsigned char)*c);
     }
 }
 
@@ -1124,8 +1230,9 @@ void drawHUD() {
         drawTextCentered(winW / 2.0f, winH * 0.44f, "C       - Switch Camera Mode", GLUT_BITMAP_HELVETICA_12);
         drawTextCentered(winW / 2.0f, winH * 0.40f, "L       - Toggle Headlights", GLUT_BITMAP_HELVETICA_12);
         drawTextCentered(winW / 2.0f, winH * 0.36f, "R       - Change Car Color", GLUT_BITMAP_HELVETICA_12);
-        drawTextCentered(winW / 2.0f, winH * 0.32f, "Arrows  - Free Camera Move", GLUT_BITMAP_HELVETICA_12);
-        drawTextCentered(winW / 2.0f, winH * 0.28f, "ESC     - Exit", GLUT_BITMAP_HELVETICA_12);
+        drawTextCentered(winW / 2.0f, winH * 0.32f, "M       - Toggle Music", GLUT_BITMAP_HELVETICA_12);
+        drawTextCentered(winW / 2.0f, winH * 0.29f, "N       - Next Track", GLUT_BITMAP_HELVETICA_12);
+        drawTextCentered(winW / 2.0f, winH * 0.25f, "ESC     - Exit", GLUT_BITMAP_HELVETICA_12);
 
         // Start prompt
         float startPulse = (sinf(t * 3.0f) + 1.0f) / 2.0f;
@@ -1181,8 +1288,24 @@ void drawHUD() {
 
         // ── Controls reminder (bottom left) ──
         glColor4f(0.5f, 0.5f, 0.5f, 0.6f);
-        drawText(25, 25, "WASD: Drive  C: Camera  L: Lights  R: Color  ESC: Exit",
+        drawText(25, 25, "WASD: Drive  C: Camera  L: Lights  R: Color  M: Music  ESC: Exit",
             GLUT_BITMAP_HELVETICA_12);
+
+        // ── Music status (top center) ──
+        if (musicPlaying) {
+            glColor3f(0.2f, 1.0f, 0.4f);
+            sprintf(buf, ">> %s  [M] Off  [N] Next", trackNames[currentTrack]);
+        } else {
+            glColor3f(0.5f, 0.5f, 0.5f);
+            sprintf(buf, "Music Off  [M] On  [N] Next Track");
+        }
+        drawText(winW / 2.0f - 150, winH - 30, buf, GLUT_BITMAP_HELVETICA_12);
+
+        // ── Collision warning ──
+        if (collisionFlash > 0.3f) {
+            glColor4f(1.0f, 0.2f, 0.0f, collisionFlash);
+            drawTextCentered(winW / 2.0f, winH * 0.6f, "CRASH!", GLUT_BITMAP_TIMES_ROMAN_24);
+        }
 
         // ── Direction indicator (bottom center) ──
         if (carSpeed < -0.5f) {
@@ -1210,9 +1333,16 @@ void display() {
     glLoadIdentity();
     glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 
-    // Camera view
-    gluLookAt(camX, camY, camZ,
-              camLookX, camLookY, camLookZ,
+    // Screen shake
+    float shakeX = 0, shakeY = 0;
+    if (screenShakeAmount > 0.01f) {
+        shakeX = (float)(rand() % 100 - 50) / 50.0f * screenShakeAmount * 0.3f;
+        shakeY = (float)(rand() % 100 - 50) / 50.0f * screenShakeAmount * 0.2f;
+    }
+
+    // Camera view (with screen shake)
+    gluLookAt(camX + shakeX, camY + shakeY, camZ,
+              camLookX + shakeX, camLookY + shakeY, camLookZ,
               0.0f, 1.0f, 0.0f);
 
     // Update dynamic lights
@@ -1225,39 +1355,47 @@ void display() {
         glLightfv(lightID, GL_POSITION, pos);
     }
 
-    // ── Draw Scene ──
-    drawRoad();
+    // ── Draw Scene (3 copies for infinite loop) ──
+    for (int loop = -1; loop <= 1; loop++) {
+        float loopOff = loop * ROAD_LENGTH;
+        glPushMatrix();
+        glTranslatef(0.0f, 0.0f, loopOff);
 
-    // Sidewalk edges
-    setMaterial(0.5f, 0.5f, 0.53f, 0.1f, 0.1f, 0.1f, 10.0f);
-    float swH = 0.18f;
-    glPushMatrix();
-    glTranslatef(-ROAD_WIDTH / 2.0f - 0.15f, swH / 2, -ROAD_LENGTH / 2.0f);
-    drawBox(0.3f, swH, ROAD_LENGTH);
-    glPopMatrix();
-    glPushMatrix();
-    glTranslatef(ROAD_WIDTH / 2.0f + 0.15f, swH / 2, -ROAD_LENGTH / 2.0f);
-    drawBox(0.3f, swH, ROAD_LENGTH);
-    glPopMatrix();
+        drawRoad();
 
-    // Buildings
-    for (const Building& b : buildings) {
-        drawBuilding(b);
+        // Sidewalk edges
+        setMaterial(0.5f, 0.5f, 0.53f, 0.1f, 0.1f, 0.1f, 10.0f);
+        float swH = 0.18f;
+        glPushMatrix();
+        glTranslatef(-ROAD_WIDTH / 2.0f - 0.15f, swH / 2, -ROAD_LENGTH / 2.0f);
+        drawBox(0.3f, swH, ROAD_LENGTH);
+        glPopMatrix();
+        glPushMatrix();
+        glTranslatef(ROAD_WIDTH / 2.0f + 0.15f, swH / 2, -ROAD_LENGTH / 2.0f);
+        drawBox(0.3f, swH, ROAD_LENGTH);
+        glPopMatrix();
+
+        // Buildings
+        for (const Building& b : buildings) {
+            drawBuilding(b);
+        }
+
+        // Street lamps
+        for (const LampPos& lp : lampPositions) {
+            drawLampPost(lp.x, lp.z);
+        }
+
+        glPopMatrix();
     }
 
-    // Street lamps
-    for (const LampPos& lp : lampPositions) {
-        drawLampPost(lp.x, lp.z);
-    }
-
-    // Traffic barriers (on center line at intervals)
-    for (float z = -10.0f; z > -ROAD_LENGTH + 20.0f; z -= 50.0f) {
-        drawBarrier(0.0f, z, 6.0f);
-    }
-
-    // Traffic cars
+    // Traffic cars (also looped)
     for (const TrafficCar& tc : trafficCars) {
-        drawTrafficCar(tc);
+        for (int loop = -1; loop <= 1; loop++) {
+            glPushMatrix();
+            glTranslatef(0.0f, 0.0f, loop * ROAD_LENGTH);
+            drawTrafficCar(tc);
+            glPopMatrix();
+        }
     }
 
     // Player car
@@ -1268,7 +1406,106 @@ void display() {
     // HUD
     drawHUD();
 
+    // Collision flash overlay
+    if (collisionFlash > 0.01f) {
+        glMatrixMode(GL_PROJECTION);
+        glPushMatrix();
+        glLoadIdentity();
+        gluOrtho2D(0, winW, 0, winH);
+        glMatrixMode(GL_MODELVIEW);
+        glPushMatrix();
+        glLoadIdentity();
+        glDisable(GL_LIGHTING);
+        glDisable(GL_DEPTH_TEST);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glColor4f(1.0f, 0.1f, 0.0f, collisionFlash * 0.4f);
+        glBegin(GL_QUADS);
+        glVertex2f(0, 0); glVertex2f(winW, 0);
+        glVertex2f(winW, winH); glVertex2f(0, winH);
+        glEnd();
+        glDisable(GL_BLEND);
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_LIGHTING);
+        glPopMatrix();
+        glMatrixMode(GL_PROJECTION);
+        glPopMatrix();
+        glMatrixMode(GL_MODELVIEW);
+    }
+
     glutSwapBuffers();
+}
+
+// ═════════════════════════════════════════════
+//  MUSIC SYSTEM
+// ═════════════════════════════════════════════
+
+static int musicSwitchState = 0;
+static float musicSwitchTimer = 0;
+static int pendingTrack = 0;
+static int currentAlias = 0;
+
+void updateMusic(float dt) {
+    if (musicSwitchState == 0) return;
+    musicSwitchTimer -= dt;
+    if (musicSwitchTimer > 0) return;
+
+    if (musicSwitchState == 1) {
+        char buf[64];
+        // Stop AND close the previous device. Closing is important:
+        // Windows has a limited number of MCI devices, and the old code
+        // only "stop"ped, so every track switch leaked a device until
+        // even track 1 refused to play.
+        sprintf(buf, "close m%d", currentAlias);
+        mciSendString(buf, NULL, 0, NULL);
+        musicSwitchState = 2;
+        musicSwitchTimer = 0.05f;
+    } else if (musicSwitchState == 2) {
+        currentAlias++;
+        char alias[16];
+        sprintf(alias, "m%d", currentAlias);
+        char cmd[512];
+        sprintf(cmd, "open \"%s\" type mpegvideo alias %s", musicFiles[pendingTrack], alias);
+        DWORD err = mciSendString(cmd, NULL, 0, NULL);
+        if (err == 0) {
+            char setcmd[128];
+            sprintf(setcmd, "set %s time format milliseconds", alias);
+            mciSendString(setcmd, NULL, 0, NULL);
+            char playcmd[128];
+            sprintf(playcmd, "play %s repeat", alias);
+            mciSendString(playcmd, NULL, 0, NULL);
+            musicPlaying = true;
+        } else {
+            // Open failed: release the failed alias so it cannot block
+            // a later attempt with the same name.
+            char closeBuf[64];
+            sprintf(closeBuf, "close %s", alias);
+            mciSendString(closeBuf, NULL, 0, NULL);
+            musicPlaying = false;
+        }
+        musicSwitchState = 0;
+    }
+}
+
+void playMusic() {
+    if (musicSwitchState != 0) return;
+    pendingTrack = currentTrack;
+    musicSwitchState = 1;
+    musicSwitchTimer = 0.05f;
+}
+
+void stopMusic() {
+    char buf[64];
+    // Close (not just stop) so the MCI device is freed for the next track.
+    sprintf(buf, "close m%d", currentAlias);
+    mciSendString(buf, NULL, 0, NULL);
+    musicPlaying = false;
+    musicSwitchState = 0;
+}
+
+void nextTrack() {
+    currentTrack = (currentTrack + 1) % NUM_TRACKS;
+    playMusic();
 }
 
 // ═════════════════════════════════════════════
@@ -1294,6 +1531,15 @@ void keyboardDown(unsigned char key, int x, int y) {
             if (gameState == DRIVING) {
                 carColorIndex = (carColorIndex + 1) % NUM_CAR_COLORS;
             }
+            break;
+
+        case 'm': case 'M':
+            if (musicPlaying) stopMusic();
+            else playMusic();
+            break;
+
+        case 'n': case 'N':
+            nextTrack();
             break;
 
         case 13: // Enter
@@ -1340,7 +1586,7 @@ void reshape(int w, int h) {
     glViewport(0, 0, w, h);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    gluPerspective(65.0, (double)w / h, 0.1, 200.0);
+    gluPerspective(65.0, (double)w / h, 0.1, 600.0);
     glMatrixMode(GL_MODELVIEW);
 }
 
@@ -1361,7 +1607,7 @@ void timer(int value) {
 // ═════════════════════════════════════════════
 
 void init() {
-    glClearColor(0.02f, 0.02f, 0.05f, 1.0f); // Dark night sky
+    glClearColor(0.04f, 0.04f, 0.08f, 1.0f); // Dark night sky
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
@@ -1372,8 +1618,8 @@ void init() {
     initTraffic();
 
     // Initial camera position (looking at menu scene)
-    camX = 0; camY = 5; camZ = 15;
-    camLookX = 0; camLookY = 0; camLookZ = -10;
+    camX = 0; camY = 5; camZ = -ROAD_LENGTH / 2.0f + 15;
+    camLookX = 0; camLookY = 0; camLookZ = -ROAD_LENGTH / 2.0f;
 }
 
 // ═════════════════════════════════════════════
